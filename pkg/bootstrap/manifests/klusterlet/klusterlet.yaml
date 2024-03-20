@@ -18,8 +18,14 @@ spec:
   clusterName: "{{ .ManagedClusterNamespace }}"
   imagePullSpec: "{{ .ImageName }}"
   namespace: "{{ .KlusterletNamespace }}"
-{{- if .ClusterAnnotations}}
   registrationConfiguration:
+    priorityBootstrapKubeconfigs:
+      type: "LocalSecrets"
+      localSecrets:
+        {{- range $index, $element := .BootstrapKubeconfigs }}
+        - name: "{{ $element.SecretName }}"
+        {{- end }}
+{{- if .ClusterAnnotations}}
     clusterAnnotations:
     {{- range $key, $value := .ClusterAnnotations }}
       "{{ $key }}": "{{ $value }}"
