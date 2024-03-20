@@ -17,6 +17,7 @@ import (
 	"github.com/stolostron/managedcluster-import-controller/pkg/helpers"
 	"github.com/stolostron/managedcluster-import-controller/pkg/helpers/imageregistry"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	operatorv1 "open-cluster-management.io/api/operator/v1"
 )
@@ -65,7 +66,8 @@ type RenderConfig struct {
 type KlusterletRenderConfig struct {
 	KlusterletNamespace       string
 	ManagedClusterNamespace   string
-	BootstrapKubeconfig       string
+	BootstrapKubeconfig       BootstrapKubeconfig
+	BootstrapKubeconfigs      []BootstrapKubeconfig // for multiple hubs cases, such as failover, backup&restore, etc.
 	RegistrationOperatorImage string
 	RegistrationImageName     string
 	WorkImageName             string
@@ -75,6 +77,11 @@ type KlusterletRenderConfig struct {
 	Tolerations               []corev1.Toleration
 	InstallMode               string
 	ClusterAnnotations        map[string]string
+}
+
+type BootstrapKubeconfig struct {
+	SecretName string
+	Content    string
 }
 
 type ImagePullSecretConfig struct {
@@ -166,10 +173,12 @@ func (b *KlusterletManifestsConfig) Generate(ctx context.Context, clientHolder *
 	var kcRegistries []klusterletconfigv1alpha1.Registries
 	var kcNodePlacement *operatorv1.NodePlacement
 	var kcImagePullSecret corev1.ObjectReference
+	var kcBootstrapKubeconfigSecrets []corev1.ObjectReference
 	if b.klusterletconfig != nil {
 		kcRegistries = b.klusterletconfig.Spec.Registries
 		kcNodePlacement = b.klusterletconfig.Spec.NodePlacement
 		kcImagePullSecret = b.klusterletconfig.Spec.PullSecret
+		kcBootstrapKubeconfigSecrets = b.klusterletconfig.Spec.PriorityBootstrapKubeconfigSecrets
 	}
 
 	// Images override
@@ -219,14 +228,34 @@ func (b *KlusterletManifestsConfig) Generate(ctx context.Context, clientHolder *
 		return nil, fmt.Errorf("invalid tolerations annotation %v", err)
 	}
 
+	// BootstrapKubeconfigs for multiple hubs cases, such as failover, backup&restore, etc.
+	var bootstrapKubeconfigs []BootstrapKubeconfig
+	if len(kcBootstrapKubeconfigSecrets) != 0 {
+		for _, secret := range kcBootstrapKubeconfigSecrets {
+			bootstrapKubeconfigsecret, err := clientHolder.KubeClient.CoreV1().Secrets(secret.Namespace).Get(ctx, secret.Name, metav1.GetOptions{})
+			if err != nil {
+				return nil, err
+			}
+
+			bootstrapKubeconfigs = append(bootstrapKubeconfigs, BootstrapKubeconfig{
+				SecretName: bootstrapKubeconfigsecret.Name,
+				Content:    base64.StdEncoding.EncodeToString(bootstrapKubeconfigsecret.Data["kubeconfig"]),
+			})
+		}
+	}
+
 	renderConfig := RenderConfig{
 		KlusterletRenderConfig: KlusterletRenderConfig{
 			ManagedClusterNamespace: b.ClusterName,
 			KlusterletNamespace:     b.KlusterletNamespace,
 			InstallMode:             string(b.InstallMode),
 
-			// BootstrapKubeConfig
-			BootstrapKubeconfig: base64.StdEncoding.EncodeToString(b.BootstrapKubeconfig),
+			// BootstrapKubeConfig(s)
+			BootstrapKubeconfig: BootstrapKubeconfig{
+				SecretName: "bootstrap-hub-kubeconfig", // This name is a constant value across repos, don't change it.
+				Content:    base64.StdEncoding.EncodeToString(b.BootstrapKubeconfig),
+			},
+			BootstrapKubeconfigs: bootstrapKubeconfigs,
 
 			// Images
 			RegistrationOperatorImage: registrationOperatorImageName,

@@ -2,6 +2,8 @@ module github.com/stolostron/managedcluster-import-controller
 
 go 1.21
 
+replace github.com/stolostron/cluster-lifecycle-api => /Users/xuezhao/workspaces/cluster-lifecycle-api
+
 require (
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
 	github.com/go-logr/logr v1.2.4

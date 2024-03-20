@@ -123,6 +123,11 @@ func NewImportHelper(informerHolder *source.InformerHolder,
 	}
 }
 
+// There are 3 cases:
+//  1. Apply all resources to the managed cluster, which is a normal case
+//  2. Apply(Update) bootstrap-hub-kubeconfig, this is when user add the annotation "cluster.open-cluster-management.io/restore-auto-import-secret"
+//  3. Apply all resources expect the Bootstrapkubeconfig, this is when user set multiple bootstrapkubeconfigs.
+//     In these cases, we want the agents to decide which bootstrapkubeconfig to use.
 func defaultApplyResourcesFunc(backupRestore bool, client *ClientHolder,
 	restMapper meta.RESTMapper, recorder events.Recorder, importSecret *corev1.Secret) (bool, error) {
 	if backupRestore {

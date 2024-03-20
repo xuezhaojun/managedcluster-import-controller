@@ -70,6 +70,8 @@ func RunAgentRegistrationServer(ctx context.Context, port int, clientHolder *hel
 
 		// In the agent-registration case, the bootstrap sa is not created in the managed cluster namespace, because managed cluster is not created yet.
 		// Instead, it's in the pod namespace with the name "agent-registration-bootstrap".
+		// The difference of 'agent-registration-bootstrap' and regular bootstrapkubeconfig in a generated import command is the clusterrole they bind.
+		// For example, 'agent-registration-bootstrap' needs the permissons of 'managedclustersets/join' because it may need to create a managedcluster.
 		bootstrapkubeconfig, _, err := bootstrap.CreateBootstrapKubeConfig(ctx, clientHolder, AgentRegistrationDefaultBootstrapSAName,
 			os.Getenv(constants.PodNamespaceEnvVarName),
 			7*24*3600, kc)
@@ -100,6 +102,36 @@ func RunAgentRegistrationServer(ctx context.Context, port int, clientHolder *hel
 		}
 
 		_, err = w.Write(content)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})))
+
+	// return only the bootstrap kubeconfig
+	// example URl: https://<route address>/agent-registration/bootstrapkubeconfig?klusterletconfig=default
+	mux.Handle("/agent-registration/bootstrapkubeconfig", authMiddleware(clientHolder, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+
+		// Get KlusterletConfig
+		var kc *klusterletconfigv1alpha1.KlusterletConfig
+		klusterletconfigName := r.URL.Query().Get("klusterletconfig")
+		if klusterletconfigName != "" {
+			kc, err = klusterletconfigLister.Get(klusterletconfigName)
+			if err != nil && !apierrors.IsNotFound(err) {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		bootstrapkubeconfig, _, err := bootstrap.CreateBootstrapKubeConfig(ctx, clientHolder, AgentRegistrationDefaultBootstrapSAName,
+			os.Getenv(constants.PodNamespaceEnvVarName),
+			7*24*3600, kc)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		_, err = w.Write(bootstrapkubeconfig)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

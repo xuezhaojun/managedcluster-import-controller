@@ -245,6 +245,16 @@ func TestKlusterletConfigGenerate(t *testing.T) {
 					},
 					Type: corev1.SecretTypeDockercfg,
 				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "hub1-bootstrap-kubeconfig-secret",
+						Namespace: "open-cluster-management-hub",
+					},
+					Data: map[string][]byte{
+						"kubeconfig": []byte("fake-kubeconfig"),
+					},
+					Type: corev1.SecretTypeOpaque,
+				},
 			},
 			config: NewKlusterletManifestsConfig(
 				operatorv1.InstallModeDefault,
@@ -272,14 +282,20 @@ func TestKlusterletConfigGenerate(t *testing.T) {
 							},
 						},
 					},
+					PriorityBootstrapKubeconfigSecrets: []corev1.ObjectReference{
+						{
+							Name:      "hub1-bootstrap-kubeconfig-secret",
+							Namespace: "open-cluster-management-hub",
+						},
+					},
 				},
 			}),
 			validateFunc: func(t *testing.T, objects []runtime.Object) {
-				if len(objects) != 10 {
+				if len(objects) != 11 {
 					t.Fatalf("Expected 10 objects, but got %d", len(objects))
 				}
 
-				klusterlet, ok := objects[8].(*operatorv1.Klusterlet)
+				klusterlet, ok := objects[9].(*operatorv1.Klusterlet)
 				if !ok {
 					t.Fatal("the klusterlet is not klusterlet")
 				}
