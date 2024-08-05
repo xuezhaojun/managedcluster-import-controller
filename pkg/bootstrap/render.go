@@ -11,13 +11,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	klusterletconfigv1alpha1 "github.com/stolostron/cluster-lifecycle-api/klusterletconfig/v1alpha1"
 	"github.com/stolostron/managedcluster-import-controller/pkg/constants"
 	"github.com/stolostron/managedcluster-import-controller/pkg/helpers"
 	"github.com/stolostron/managedcluster-import-controller/pkg/helpers/imageregistry"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	apifeature "open-cluster-management.io/api/feature"
 	operatorv1 "open-cluster-management.io/api/operator/v1"
 )
 
@@ -65,22 +68,33 @@ type RenderConfig struct {
 	ImagePullSecretConfig
 }
 
+type BootstrapKubeConfigSecret struct {
+	Name       string
+	KubeConfig string
+}
+
 // KlusterletRenderConfig defines variables used in the klusterletFiles.
 type KlusterletRenderConfig struct {
-	KlusterletName                         string
-	KlusterletNamespace                    string
-	ManagedClusterNamespace                string
-	BootstrapKubeconfig                    string
-	RegistrationOperatorImage              string
-	RegistrationImageName                  string
-	WorkImageName                          string
-	ImageName                              string
-	PriorityClassName                      string
-	AppliedManifestWorkEvictionGracePeriod string
-	NodeSelector                           map[string]string
-	Tolerations                            []corev1.Toleration
-	InstallMode                            string
-	ClusterAnnotations                     map[string]string
+	KlusterletName            string
+	KlusterletNamespace       string
+	ManagedClusterNamespace   string
+	RegistrationOperatorImage string
+	RegistrationImageName     string
+	WorkImageName             string
+	ImageName                 string
+	PriorityClassName         string
+	InstallMode               string
+
+	NodeSelector  map[string]string
+	Tolerations   []corev1.Toleration
+	NodePlacement *operatorv1.NodePlacement
+
+	RegistrationConfiguration *operatorv1.RegistrationConfiguration
+	WorkConfiguration         *operatorv1.WorkAgentConfiguration
+
+	MultipleHubsEnabled              bool
+	DefaultBootstrapKubeConfigSecret BootstrapKubeConfigSecret
+	BootstrapKubeConfigSecrets       []BootstrapKubeConfigSecret
 }
 
 type ImagePullSecretConfig struct {
@@ -234,9 +248,50 @@ func (b *KlusterletManifestsConfig) Generate(ctx context.Context, clientHolder *
 	klusterletName, klusterletNamespace := getKlusterletNamespaceName(
 		b.klusterletconfig, b.ClusterName, b.ManagedClusterAnnotations, b.InstallMode)
 
-	// AppliedManifestWorkEvictionGracePeriod
+	// WorkAgentConfiguration
+	workAgentConfiguration := &operatorv1.WorkAgentConfiguration{}
 	if appliedManifestWorkEvictionGracePeriod == constants.AppliedManifestWorkEvictionGracePeriodInfinite {
 		appliedManifestWorkEvictionGracePeriod = constants.AppliedManifestWorkEvictionGracePeriod100Years
+	}
+	if appliedManifestWorkEvictionGracePeriod != "" {
+		appliedManifestWorkEvictionGracePeriodTimeDuration, err := time.ParseDuration(appliedManifestWorkEvictionGracePeriod)
+		if err != nil {
+			return nil, fmt.Errorf("parse appliedManifestWorkEvictionGracePeriod %s failed: %v", appliedManifestWorkEvictionGracePeriod, err)
+		}
+		workAgentConfiguration.AppliedManifestWorkEvictionGracePeriod = &metav1.Duration{Duration: appliedManifestWorkEvictionGracePeriodTimeDuration}
+	}
+
+	// RegistrationConfiguration
+	registrationConfiguration := &operatorv1.RegistrationConfiguration{
+		ClusterAnnotations: b.KlusterletClusterAnnotations,
+	}
+	if b.klusterletconfig != nil && b.klusterletconfig.Spec.BootstrapKubeConfigs.Type == operatorv1.LocalSecrets {
+		registrationConfiguration.FeatureGates = []operatorv1.FeatureGate{
+			{
+				Feature: string(apifeature.MultipleHubs),
+				Mode:    operatorv1.FeatureGateModeTypeEnable,
+			},
+		}
+		registrationConfiguration.BootstrapKubeConfigs = b.klusterletconfig.Spec.BootstrapKubeConfigs
+	}
+
+	// MultipleHubs
+	// Using MultipleHubs can controls the bootstrap kubeconfig secret/secrets easier.
+	multipleHubsEnabled := false
+	bootstrapKubeConfigSecrets := []BootstrapKubeConfigSecret{}
+	if b.klusterletconfig != nil && b.klusterletconfig.Spec.BootstrapKubeConfigs.Type == operatorv1.LocalSecrets {
+		multipleHubsEnabled = true
+		for _, s := range b.klusterletconfig.Spec.BootstrapKubeConfigs.LocalSecrets.KubeConfigSecrets {
+			ns := os.Getenv(constants.PodNamespaceEnvVarName)
+			secret, err := clientHolder.KubeClient.CoreV1().Secrets(ns).Get(ctx, s.Name, metav1.GetOptions{})
+			if err != nil {
+				return nil, err
+			}
+			bootstrapKubeConfigSecrets = append(bootstrapKubeConfigSecrets, BootstrapKubeConfigSecret{
+				Name:       s.Name,
+				KubeConfig: base64.StdEncoding.EncodeToString(secret.Data[corev1.ServiceAccountTokenKey]),
+			})
+		}
 	}
 
 	renderConfig := RenderConfig{
@@ -246,9 +301,6 @@ func (b *KlusterletManifestsConfig) Generate(ctx context.Context, clientHolder *
 			KlusterletNamespace:     klusterletNamespace,
 			InstallMode:             string(b.InstallMode),
 
-			// BootstrapKubeConfig
-			BootstrapKubeconfig: base64.StdEncoding.EncodeToString(b.BootstrapKubeconfig),
-
 			// Images
 			RegistrationOperatorImage: registrationOperatorImageName,
 			RegistrationImageName:     registrationImageName,
@@ -256,15 +308,31 @@ func (b *KlusterletManifestsConfig) Generate(ctx context.Context, clientHolder *
 			ImageName:                 registrationOperatorImageName,
 
 			// PriorityClassName
-			PriorityClassName:                      b.PriorityClassName,
-			AppliedManifestWorkEvictionGracePeriod: appliedManifestWorkEvictionGracePeriod,
+			PriorityClassName: b.PriorityClassName,
 
-			// NodePlacement
+			// NodeSelector and Tolerations used in operator
 			NodeSelector: nodeSelector,
 			Tolerations:  tolerations,
 
-			// KlusterletClusterAnnotations
-			ClusterAnnotations: b.KlusterletClusterAnnotations,
+			// NodePlacement used in klusterlet
+			NodePlacement: &operatorv1.NodePlacement{
+				NodeSelector: nodeSelector,
+				Tolerations:  tolerations,
+			},
+
+			// WorkAgetnConfiguration
+			WorkConfiguration: workAgentConfiguration,
+
+			// RegistrationConfiguration
+			RegistrationConfiguration: registrationConfiguration,
+
+			// MultipleHubs controls the bootstrap kubeconfig secret/secrets.
+			MultipleHubsEnabled: multipleHubsEnabled,
+			DefaultBootstrapKubeConfigSecret: BootstrapKubeConfigSecret{
+				Name:       constants.DefaultBootstrapHubKubeConfigSecretName,
+				KubeConfig: base64.StdEncoding.EncodeToString(b.BootstrapKubeconfig),
+			},
+			BootstrapKubeConfigSecrets: bootstrapKubeConfigSecrets,
 		},
 	}
 
