@@ -123,6 +123,19 @@ func Add(ctx context.Context,
 					UpdateFunc:  func(e event.UpdateEvent) bool { return true },
 				})),
 		).
+		Watches(
+			&corev1.Secret{},
+			&enqueueManagedClusterByBootstrapKubeConfigSecrets{
+				managedclusterIndexer:   informerHolder.ManagedClusterInformer.GetIndexer(),
+				klusterletconfigIndexer: informerHolder.KlusterletConfigInformer.GetIndexer(),
+			},
+			builder.WithPredicates(predicate.Funcs{
+				GenericFunc: func(e event.GenericEvent) bool { return true },
+				CreateFunc:  func(e event.CreateEvent) bool { return true },
+				DeleteFunc:  func(e event.DeleteEvent) bool { return true },
+				UpdateFunc:  func(e event.UpdateEvent) bool { return true },
+			}),
+		).
 		Complete(&ReconcileImportConfig{
 			clientHolder:           clientHolder,
 			klusterletconfigLister: informerHolder.KlusterletConfigLister,
