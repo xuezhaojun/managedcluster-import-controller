@@ -23,40 +23,18 @@ import (
 
 const (
 	userNameSignature = "system:serviceaccount:%s:%s-bootstrap-sa"
-	clusterLabel      = "open-cluster-management.io/cluster-name"
 )
 
 var log = logf.Log.WithName("controller_csr")
-
-func getClusterName(csr *certificatesv1.CertificateSigningRequest) (clusterName string) {
-	for label, v := range csr.GetObjectMeta().GetLabels() {
-		if label == clusterLabel {
-			clusterName = v
-		}
-	}
-	return clusterName
-}
-
-func getApprovalType(csr *certificatesv1.CertificateSigningRequest) string {
-	if csr.Status.Conditions == nil {
-		return ""
-	}
-	for _, c := range csr.Status.Conditions {
-		if c.Type == certificatesv1.CertificateApproved || c.Type == certificatesv1.CertificateDenied {
-			return string(c.Type)
-		}
-	}
-	return ""
-}
 
 func validUsername(csr *certificatesv1.CertificateSigningRequest, clusterName string) bool {
 	return csr.Spec.Username == fmt.Sprintf(userNameSignature, clusterName, clusterName)
 }
 
 func csrPredicate(csr *certificatesv1.CertificateSigningRequest) bool {
-	clusterName := getClusterName(csr)
+	clusterName := helpers.GetClusterName(csr)
 	return clusterName != "" &&
-		getApprovalType(csr) == "" &&
+		helpers.GetApprovalType(csr) == "" &&
 		validUsername(csr, clusterName)
 }
 
@@ -86,11 +64,11 @@ func (r *ReconcileCSR) Reconcile(ctx context.Context, request reconcile.Request)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	if isCSRInTerminalState(&csr.Status) {
+	if helpers.IsCSRInTerminalState(&csr.Status) {
 		return reconcile.Result{}, nil
 	}
 
-	clusterName := getClusterName(csr)
+	clusterName := helpers.GetClusterName(csr)
 	cluster := clusterv1.ManagedCluster{}
 	err = r.clientHolder.RuntimeClient.Get(ctx, types.NamespacedName{Name: clusterName}, &cluster)
 	if errors.IsNotFound(err) {
@@ -117,17 +95,4 @@ func (r *ReconcileCSR) Reconcile(ctx context.Context, request reconcile.Request)
 
 	r.recorder.Eventf("ManagedClusterCSRAutoApproved", "managed cluster csr %q is auto approved by import controller", csr.Name)
 	return reconcile.Result{}, nil
-}
-
-// check whether a CSR is in terminal state
-func isCSRInTerminalState(status *certificatesv1.CertificateSigningRequestStatus) bool {
-	for _, c := range status.Conditions {
-		if c.Type == certificatesv1.CertificateApproved {
-			return true
-		}
-		if c.Type == certificatesv1.CertificateDenied {
-			return true
-		}
-	}
-	return false
 }
