@@ -16,6 +16,7 @@ import (
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/clusterdeployment"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/clusternamespacedeletion"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/csr"
+	"github.com/stolostron/managedcluster-import-controller/pkg/controller/flightctl"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/hosted"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/importconfig"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/importstatus"
@@ -36,6 +37,7 @@ func AddToManager(ctx context.Context,
 	manager manager.Manager,
 	clientHolder *helpers.ClientHolder,
 	informerHolder *source.InformerHolder,
+	flightctler flightctl.FlightCtler,
 	mcRecorder kevents.EventRecorder) error {
 
 	AddToManagerFuncs := []struct {
@@ -46,7 +48,19 @@ func AddToManager(ctx context.Context,
 			csr.ControllerName,
 			func() error {
 				return csr.Add(ctx, manager, clientHolder,
-					[]func(ctx context.Context, csr *certificatesv1.CertificateSigningRequest) (bool, error){})
+					[]func(ctx context.Context, csr *certificatesv1.CertificateSigningRequest) (bool, error){
+						// Case 1: If flightctl is enabled and a csr is from a flightctl device, approve it.
+						func(ctx context.Context, csr *certificatesv1.CertificateSigningRequest) (bool, error) {
+							isFlightCtlEnabled, err := flightctler.IsFlightCtlEnabled(ctx)
+							if err != nil {
+								return false, err
+							}
+							if isFlightCtlEnabled {
+								return flightctler.IsManagedClusterAFlightctlDevice(ctx, csr.Spec.Username)
+							}
+							return false, nil
+						},
+					})
 			},
 		},
 		{
@@ -89,6 +103,14 @@ func AddToManager(ctx context.Context,
 				}
 				return nil
 			},
+		},
+		{
+			flightctl.NamespaceControllerName,
+			func() error { return flightctl.AddNSController(ctx, manager, flightctler, clientHolder) },
+		},
+		{
+			flightctl.ManagedClusterControllerName,
+			func() error { return flightctl.AddManagedClusterController(ctx, manager, flightctler, clientHolder) },
 		},
 	}
 

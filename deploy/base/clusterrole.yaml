@@ -268,4 +268,11 @@ rules:
   verbs:
   - get
   - list
-
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - get
+  - update
