@@ -21,11 +21,6 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-const (
-	FlightCtlNamespace      = "flightctl"
-	FlightCtlInternalServer = "https://flightctl-api.flightctl.svc.cluster.local:3443"
-)
-
 //go:embed manifests
 var FlightCtlManifestFiles embed.FS
 
@@ -37,15 +32,14 @@ var files = []string{
 	"manifests/clusterrolebinding_agentregistration.yml",
 	"manifests/clusterrolebinding_flightctl.yml",
 	"manifests/serviceaccount.yml",
-	"manifests/networkpolicy.yml",
 }
 
-func NewFlightCtlManager(clientHolder *helpers.ClientHolder, clusterIngressDomain string) *FlightCtlManager {
+func NewFlightCtlManager(clientHolder *helpers.ClientHolder, clusterIngressDomain string, flightctlServer string) *FlightCtlManager {
 	return &FlightCtlManager{
-		flightctlClient:         &flightctlClientImpl{flightctlServer: FlightCtlInternalServer},
 		agentRegistrationServer: "https://agent-registration-multicluster-engine." + clusterIngressDomain,
 		clientHolder:            clientHolder,
 		recorder:                helpers.NewEventRecorder(clientHolder.KubeClient, "FlightCtl"),
+		flightctlClient:         &flightctlClientImpl{flightctlServer: flightctlServer},
 	}
 }
 
@@ -77,22 +71,15 @@ func (f *FlightCtlManager) ApplyResources(ctx context.Context) error {
 	return nil
 }
 
-func (f *FlightCtlManager) applyKuberentesResources(ctx context.Context) error {
+// filghtctl is installed in the mch namespace, so no need to check if the namespace exists.
+func (f *FlightCtlManager) applyKuberentesResources(_ context.Context) error {
 	var err error
-
-	// Check if the FlightCtl namespace exists
-	_, err = f.clientHolder.KubeClient.CoreV1().Namespaces().Get(ctx, FlightCtlNamespace, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
 
 	// Create rbac resources and set owner reference to the ns.
 	objects, err := helpers.FilesToObjects(files, struct {
-		Namespace    string
-		PodNamespace string
+		Namespace string
 	}{
-		Namespace:    FlightCtlNamespace,
-		PodNamespace: os.Getenv("POD_NAMESPACE"),
+		Namespace: os.Getenv("POD_NAMESPACE"),
 	}, &FlightCtlManifestFiles)
 	if err != nil {
 		return err
@@ -182,7 +169,7 @@ func (f *FlightCtlManager) getFlightCtlClientServiceAccountToken(ctx context.Con
 	}
 
 	// Get the token using TokenRequest API
-	tokenResponse, err := f.clientHolder.KubeClient.CoreV1().ServiceAccounts(FlightCtlNamespace).
+	tokenResponse, err := f.clientHolder.KubeClient.CoreV1().ServiceAccounts(os.Getenv("POD_NAMESPACE")).
 		CreateToken(ctx, "flightctl-client", tokenRequest, metav1.CreateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to create token: %v", err)

@@ -108,9 +108,11 @@ func main() {
 
 	var clusterIngressDomain string
 	var enableFlightCtl bool = false
-
+	var flightctlServer string
 	pflag.StringVar(&clusterIngressDomain, "cluster-ingress-domain", "", "the ingress domain of the cluster")
 	pflag.BoolVar(&enableFlightCtl, "enable-flightctl", false, "enable flightctl")
+	pflag.StringVar(&flightctlServer, "flightctl-server",
+		"https://flightctl-api.open-cluster-management.svc.cluster.local:3443", "the server address of the flightctl")
 
 	pflag.StringVar(&leaderElectionNamespace, "leader-election-namespace", "", "required when the process is not running in cluster")
 	pflag.BoolVar(&helpers.DeployOnOCP, "deploy-on-ocp", true, "used to deploy the controller on OCP or not")
@@ -306,7 +308,7 @@ func main() {
 	mcRecorder := helpers.NewManagedClusterEventRecorder(ctx, clientHolder.KubeClient)
 
 	// Init flightctlManager
-	flightctlManager := flightctl.NewFlightCtlManager(clientHolder, clusterIngressDomain)
+	flightctlManager := flightctl.NewFlightCtlManager(clientHolder, clusterIngressDomain, flightctlServer)
 
 	setupLog.Info("Registering Controllers")
 	if err := controller.AddToManager(
