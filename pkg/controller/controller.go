@@ -17,6 +17,7 @@ import (
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/clusternamespacedeletion"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/csr"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/flightctl"
+	"github.com/stolostron/managedcluster-import-controller/pkg/controller/hiveconfig"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/hosted"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/importconfig"
 	"github.com/stolostron/managedcluster-import-controller/pkg/controller/importstatus"
@@ -98,6 +99,12 @@ func AddToManager(ctx context.Context,
 					return hosted.Add(ctx, manager, clientHolder, informerHolder, mcRecorder)
 				}
 				return nil
+			},
+		},
+		{
+			hiveconfig.ControllerName,
+			func() error {
+				return hiveconfig.Add(manager, clientHolder, mcRecorder)
 			},
 		},
 	}
