@@ -42,8 +42,8 @@ const (
 	// The namespace where the HiveConfig is located
 	HiveNamespace = "hive"
 
-	// AnnotationHiveAPITLSCert is the annotation key that contains the Hive API TLS certificate bundle
-	AnnotationHiveAPITLSCert = "managedcluster-import-controller.open-cluster-management.io/hive-api-tls-cert"
+	// AnnotationHiveAPITLSCertSecretName is the annotation key that contains the name of the secret that contains the Hive API TLS certificate bundle
+	AnnotationHiveAPITLSCertSecretName = "managedcluster-import-controller.open-cluster-management.io/hive-api-tls-cert-secret"
 
 	// AdditionalCASecretName is the name of the secret that will be created in the managed cluster
 	AdditionalCASecretName = "acm-additional-ca"
@@ -84,12 +84,12 @@ func Add(mgr manager.Manager, clientHolder *helpers.ClientHolder, mcRecorder kev
 					// Get the old and new annotation values
 					oldAnnotation := ""
 					if oldHiveConfig.Annotations != nil {
-						oldAnnotation = oldHiveConfig.Annotations[AnnotationHiveAPITLSCert]
+						oldAnnotation = oldHiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName]
 					}
 
 					newAnnotation := ""
 					if newHiveConfig.Annotations != nil {
-						newAnnotation = newHiveConfig.Annotations[AnnotationHiveAPITLSCert]
+						newAnnotation = newHiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName]
 					}
 
 					// Only reconcile if the annotation has changed
@@ -102,7 +102,7 @@ func Add(mgr manager.Manager, clientHolder *helpers.ClientHolder, mcRecorder kev
 					}
 
 					// Only reconcile if the annotation is set
-					return hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCert] != ""
+					return hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName] != ""
 				},
 				DeleteFunc: func(e event.DeleteEvent) bool {
 					// Always reconcile on delete
@@ -138,7 +138,7 @@ func Add(mgr manager.Manager, clientHolder *helpers.ClientHolder, mcRecorder kev
 				}
 
 				// Check if the secret is referenced in the annotation
-				if hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCert] == secret.Name {
+				if hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName] == secret.Name {
 					// This secret is referenced by the HiveConfig, trigger a reconcile
 					return []reconcile.Request{
 						{
@@ -180,9 +180,9 @@ func (r *ReconcileHiveConfig) Reconcile(ctx context.Context, request reconcile.R
 	var secretFound bool
 
 	// Check if the annotation is configured
-	if hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCert] != "" {
+	if hiveConfig.Annotations != nil && hiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName] != "" {
 		// Get the referenced secret
-		secretName := hiveConfig.Annotations[AnnotationHiveAPITLSCert]
+		secretName := hiveConfig.Annotations[AnnotationHiveAPITLSCertSecretName]
 		secretNamespace := HiveNamespace
 
 		// Get the referenced secret
@@ -203,20 +203,6 @@ func (r *ReconcileHiveConfig) Reconcile(ctx context.Context, request reconcile.R
 		}
 
 		secretFound = true
-	}
-
-	if secretFound {
-		// Apply the additional CA secret to the hub cluster and update HiveConfig
-		if err := applyAdditionalCASecretRef(ctx, r.hubClientHolder, apiTLSCertSecret); err != nil {
-			log.Error(err, "failed to apply additional CA secret to hub cluster")
-			return reconcile.Result{}, err
-		}
-	} else {
-		// Remove the additional CA secret reference from HiveConfig
-		if err := removeAdditionalCASecretRef(ctx, r.hubClientHolder, hiveConfig); err != nil {
-			log.Error(err, "failed to remove additional CA secret reference from HiveConfig")
-			return reconcile.Result{}, err
-		}
 	}
 
 	// Get all managed clusters
@@ -289,6 +275,20 @@ func (r *ReconcileHiveConfig) Reconcile(ctx context.Context, request reconcile.R
 				log.Error(err, "failed to remove additional CA from API server", "cluster", cluster.Name)
 				continue
 			}
+		}
+	}
+
+	if secretFound {
+		// Apply the additional CA secret to the hub cluster and update HiveConfig
+		if err := applyAdditionalCASecretRef(ctx, r.hubClientHolder, apiTLSCertSecret); err != nil {
+			log.Error(err, "failed to apply additional CA secret to hub cluster")
+			return reconcile.Result{}, err
+		}
+	} else {
+		// Remove the additional CA secret reference from HiveConfig
+		if err := removeAdditionalCASecretRef(ctx, r.hubClientHolder, hiveConfig); err != nil {
+			log.Error(err, "failed to remove additional CA secret reference from HiveConfig")
+			return reconcile.Result{}, err
 		}
 	}
 
