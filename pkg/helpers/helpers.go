@@ -67,11 +67,11 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+const maxConcurrentReconcilesEnvVarName = "MAX_CONCURRENT_RECONCILES"
+
 const (
-	nodeSelectorAnnotation            = "open-cluster-management/nodeSelector"
-	tolerationsAnnotation             = "open-cluster-management/tolerations"
-	maxConcurrentReconcilesEnvVarName = "MAX_CONCURRENT_RECONCILES"
-	defaultMaxConcurrentReconciles    = 1
+	nodeSelectorAnnotation = "open-cluster-management/nodeSelector"
+	tolerationsAnnotation  = "open-cluster-management/tolerations"
 )
 
 // DeployOnOCP is set once at the beginning
@@ -109,16 +109,19 @@ type ClientHolder struct {
 	WorkClient          workclient.Interface
 }
 
-// GetMaxConcurrentReconciles returns the maximum number of concurrent reconciles from MAX_CONCURRENT_RECONCILES env.
-// If the environment variable is not set or invalid, returns the default value of 1.
+// GetMaxConcurrentReconciles get the max concurrent reconciles from MAX_CONCURRENT_RECONCILES env,
+// if the reconciles cannot be found, return 1
 func GetMaxConcurrentReconciles() int {
-	if envVal := os.Getenv(maxConcurrentReconcilesEnvVarName); envVal != "" {
-		if val, err := strconv.Atoi(envVal); err == nil {
-			return val
+	maxConcurrentReconciles := 1
+	if os.Getenv(maxConcurrentReconcilesEnvVarName) != "" {
+		var err error
+		maxConcurrentReconciles, err = strconv.Atoi(os.Getenv(maxConcurrentReconcilesEnvVarName))
+		if err != nil {
+			klog.Warningf("The value of %s env is wrong, using default reconciles (1)", maxConcurrentReconcilesEnvVarName)
+			maxConcurrentReconciles = 1
 		}
-		klog.Warningf("Invalid value for %s env, using default (%d)", maxConcurrentReconcilesEnvVarName, defaultMaxConcurrentReconciles)
 	}
-	return defaultMaxConcurrentReconciles
+	return maxConcurrentReconciles
 }
 
 // GenerateImportClientFromKubeConfigSecret generate a client from a given secret that contains a kubeconfig
