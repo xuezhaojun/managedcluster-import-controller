@@ -226,6 +226,9 @@ func (r *ReconcileManagedCluster) deleteManagedClusterAddon(
 	return helpers.ForceDeleteAllManagedClusterAddons(ctx, r.client, managedCluster, r.recorder, r.mcRecorder)
 }
 
+// ensureCreateViaAnnotation ensures the CreatedViaAnnotation is set with the correct value.
+// If the annotation is missing or has an invalid value (not one of: AI, Hive, Discovery, Hypershift),
+// it will be set to the default value "other".
 func ensureCreateViaAnnotation(modified *bool, cluster *clusterv1.ManagedCluster) {
 	createViaOtherAnnotation := map[string]string{constants.CreatedViaAnnotation: createdViaOther}
 	viaAnnotation, ok := cluster.Annotations[constants.CreatedViaAnnotation]
